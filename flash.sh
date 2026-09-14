@@ -81,6 +81,7 @@ parse_partitions_csv "$PARTITIONS_CSV"
 BUILD_DIR="$(cache_build_dir "$PROJECT_ARG" "$MODULE_ARG")"
 mkdir -p "$BUILD_DIR"
 
+BOOTLOADER_OFFSET="$(bootloader_offset_for_target "$IDF_TARGET")"
 FLASH_ARGS=()
 
 if [ "$FULL" -eq 1 ]; then
@@ -103,7 +104,6 @@ if [ "$FULL" -eq 1 ]; then
         die "Missing pre-staged build files."
     fi
 
-    BOOTLOADER_OFFSET="$(bootloader_offset_for_target "$IDF_TARGET")"
     FLASH_ARGS=(
         "$BOOTLOADER_OFFSET" "bootloader/bootloader.bin"
         "0x8000" "partition_table/partition-table.bin"
@@ -112,6 +112,7 @@ if [ "$FULL" -eq 1 ]; then
     )
     MODE_LABEL="full (blank-chip) flash"
 else
+    check_bootloader_present "$BOOTLOADER_OFFSET"
     APP_FILE="$BUILD_DIR/$OTA_BIN_FILENAME"
     if [ "$REFRESH" -eq 1 ] || [ ! -f "$APP_FILE" ]; then
         download_app_bin "$BUILD_DIR" >/dev/null
@@ -120,6 +121,15 @@ else
     fi
     FLASH_ARGS=("$APP_OFFSET" "$OTA_BIN_FILENAME")
     MODE_LABEL="app-only flash (existing bootloader/partition table preserved)"
+    if [ -n "$APP1_OFFSET" ]; then
+        # Two-slot OTA layout: the device may currently be booting from
+        # ota_1, not ota_0 (normal after any real OTA update), so write the
+        # same image to both slots — otherwise "succeeded" can silently land
+        # in the slot that isn't actually booted, and the old version keeps
+        # running. See AGENTS.md/CLAUDE.md, "Implemented scripts".
+        FLASH_ARGS+=("$APP1_OFFSET" "$OTA_BIN_FILENAME")
+        MODE_LABEL="app-only flash, both OTA slots (existing bootloader/partition table preserved)"
+    fi
 fi
 
 print_separator() { printf '%*s\n' "67" '' | tr ' ' '='; }

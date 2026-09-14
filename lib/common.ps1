@@ -81,12 +81,17 @@ function Load-ModuleSettings {
 }
 
 # Reads partitions.csv and returns a hashtable with NvsOffset, NvsSize,
-# OtaDataOffset, OtaDataSize, AppOffset, AppSize. AppOffset prefers the
-# ota_0 slot; falls back to a factory partition if present instead.
+# OtaDataOffset, OtaDataSize, AppOffset, AppSize, App1Offset, App1Size.
+# AppOffset prefers the ota_0 slot; falls back to a factory partition if
+# present instead. App1Offset is the ota_1 slot, if the module has a second
+# one ($null otherwise) - see flash.ps1: a device that has ever received a
+# real OTA update may currently be booting from ota_1, not ota_0, so an
+# app-only serial reflash has to write BOTH slots to be sure the new binary
+# actually takes effect regardless of which one is active.
 function Read-PartitionsCsv {
     param([string]$Path)
 
-    $result = @{ NvsOffset = $null; NvsSize = $null; OtaDataOffset = $null; OtaDataSize = $null; AppOffset = $null; AppSize = $null }
+    $result = @{ NvsOffset = $null; NvsSize = $null; OtaDataOffset = $null; OtaDataSize = $null; AppOffset = $null; AppSize = $null; App1Offset = $null; App1Size = $null }
     $factoryOffset = $null; $factorySize = $null
 
     foreach ($line in Get-Content -Path $Path) {
@@ -101,6 +106,7 @@ function Read-PartitionsCsv {
             'data,nvs' { $result.NvsOffset = $offset; $result.NvsSize = $size }
             'data,ota' { $result.OtaDataOffset = $offset; $result.OtaDataSize = $size }
             'app,ota_0' { $result.AppOffset = $offset; $result.AppSize = $size }
+            'app,ota_1' { $result.App1Offset = $offset; $result.App1Size = $size }
             'app,factory' { $factoryOffset = $offset; $factorySize = $size }
         }
     }
@@ -120,6 +126,37 @@ function Get-BootloaderOffset {
     param([string]$IdfTarget)
     if ($IdfTarget -eq 'esp32') { return '0x1000' }
     return '0x0'
+}
+
+# Reads the single byte at -Offset (a bootloader offset) off the currently
+# connected chip and dies with a plain-English message if it isn't a valid
+# ESP image header (magic byte 0xE9) - i.e. this chip has no bootloader at
+# all, so an app-only flash would "succeed" while leaving it unable to boot
+# anything (a genuinely blank chip needs -Full instead). Only meaningful
+# before an app-only flash; -Full always (re)writes the bootloader itself.
+function Test-BootloaderPresent {
+    param(
+        [string]$EspToolPath,
+        [string]$IdfTarget,
+        [string]$SerialPort,
+        [string]$Baud,
+        [string]$Offset
+    )
+    $tmp = [System.IO.Path]::GetTempFileName()
+    try {
+        & $EspToolPath --chip $IdfTarget --port $SerialPort --baud $Baud read_flash $Offset 1 $tmp 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warn "Could not verify the existing bootloader before flashing - continuing anyway."
+            return
+        }
+        $bytes = [System.IO.File]::ReadAllBytes($tmp)
+        if ($bytes.Length -lt 1 -or $bytes[0] -ne 0xE9) {
+            $found = if ($bytes.Length -ge 1) { '0x{0:X2}' -f $bytes[0] } else { '(nothing read)' }
+            Die "No valid bootloader found at $Offset (expected ESP image magic byte 0xE9, found $found). This looks like a blank / never-flashed chip - an app-only flash would write the app but the chip could never boot it. Re-run with -Full instead (needs bootloader.bin/partition-table.bin/ota_data_initial.bin pre-staged locally - see AGENTS.md/CLAUDE.md)."
+        }
+    } finally {
+        Remove-Item -Path $tmp -ErrorAction SilentlyContinue
+    }
 }
 
 function Get-CacheBuildDir {

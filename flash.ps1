@@ -76,6 +76,7 @@ New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 
 $FlashPairs = New-Object System.Collections.Generic.List[string]
 $OtaBinFilename = $Settings['OTA_BIN_FILENAME']
+$BootloaderOffset = Get-BootloaderOffset -IdfTarget $IdfTarget
 
 if ($Full) {
     $BootloaderFile = Join-Path $BuildDir 'bootloader\bootloader.bin'
@@ -94,13 +95,13 @@ if ($Full) {
         Die "Missing pre-staged build files."
     }
 
-    $BootloaderOffset = Get-BootloaderOffset -IdfTarget $IdfTarget
     $FlashPairs.Add($BootloaderOffset); $FlashPairs.Add('bootloader\bootloader.bin')
     $FlashPairs.Add('0x8000'); $FlashPairs.Add('partition_table\partition-table.bin')
     $FlashPairs.Add($Parts.OtaDataOffset); $FlashPairs.Add('ota_data_initial.bin')
     $FlashPairs.Add($Parts.AppOffset); $FlashPairs.Add($OtaBinFilename)
     $ModeLabel = 'full (blank-chip) flash'
 } else {
+    Test-BootloaderPresent -EspToolPath $EspTool -IdfTarget $IdfTarget -SerialPort $SerialPort -Baud $Baud -Offset $BootloaderOffset
     $AppFile = Join-Path $BuildDir $OtaBinFilename
     if ($Refresh -or -not (Test-Path $AppFile)) {
         Get-AppBin -DestDir $BuildDir | Out-Null
@@ -109,6 +110,15 @@ if ($Full) {
     }
     $FlashPairs.Add($Parts.AppOffset); $FlashPairs.Add($OtaBinFilename)
     $ModeLabel = 'app-only flash (existing bootloader/partition table preserved)'
+    if ($Parts.App1Offset) {
+        # Two-slot OTA layout: the device may currently be booting from
+        # ota_1, not ota_0 (normal after any real OTA update), so write the
+        # same image to both slots - otherwise "succeeded" can silently land
+        # in the slot that isn't actually booted, and the old version keeps
+        # running. See AGENTS.md/CLAUDE.md, "Implemented scripts".
+        $FlashPairs.Add($Parts.App1Offset); $FlashPairs.Add($OtaBinFilename)
+        $ModeLabel = 'app-only flash, both OTA slots (existing bootloader/partition table preserved)'
+    }
 }
 
 $Sep = '=' * 67

@@ -77,12 +77,18 @@ load_module_settings() {
 
 # Reads partitions.csv (same format/offsets used by the real firmware
 # build — see __REFERENCE__) and sets:
-#   NVS_OFFSET, NVS_SIZE, OTADATA_OFFSET, OTADATA_SIZE, APP_OFFSET, APP_SIZE
+#   NVS_OFFSET, NVS_SIZE, OTADATA_OFFSET, OTADATA_SIZE, APP_OFFSET, APP_SIZE,
+#   APP1_OFFSET, APP1_SIZE
 # APP_OFFSET prefers the ota_0 slot; falls back to a factory partition if
-# the module has no OTA slots.
+# the module has no OTA slots. APP1_OFFSET is the ota_1 slot, if the module
+# has a second one (empty otherwise) — see flash.sh: a device that has ever
+# received a real OTA update may currently be booting from ota_1, not
+# ota_0, so an app-only serial reflash has to write BOTH slots to be sure
+# the new binary actually takes effect regardless of which one is active.
 parse_partitions_csv() {
     local csv="$1"
-    NVS_OFFSET=""; NVS_SIZE=""; OTADATA_OFFSET=""; OTADATA_SIZE=""; APP_OFFSET=""; APP_SIZE=""
+    NVS_OFFSET=""; NVS_SIZE=""; OTADATA_OFFSET=""; OTADATA_SIZE=""
+    APP_OFFSET=""; APP_SIZE=""; APP1_OFFSET=""; APP1_SIZE=""
     local factory_offset="" factory_size=""
     local line name type subtype offset size
 
@@ -101,6 +107,7 @@ parse_partitions_csv() {
             data,nvs) NVS_OFFSET="$offset"; NVS_SIZE="$size" ;;
             data,ota) OTADATA_OFFSET="$offset"; OTADATA_SIZE="$size" ;;
             app,ota_0) APP_OFFSET="$offset"; APP_SIZE="$size" ;;
+            app,ota_1) APP1_OFFSET="$offset"; APP1_SIZE="$size" ;;
             app,factory) factory_offset="$offset"; factory_size="$size" ;;
         esac
     done < "$csv"
@@ -120,6 +127,31 @@ bootloader_offset_for_target() {
         esp32) echo "0x1000" ;;
         *) echo "0x0" ;;
     esac
+}
+
+# Reads the single byte at $1 (a bootloader offset) off the currently
+# connected chip (uses IDF_TARGET/SERIAL_PORT/BAUD/ESPTOOL_CMD, already set
+# by the caller) and dies with a plain-English message if it isn't a valid
+# ESP image header (magic byte 0xe9) — i.e. this chip has no bootloader at
+# all, so an app-only flash would "succeed" while leaving it unable to boot
+# anything (a genuinely blank chip needs --full instead). Only meaningful
+# before an app-only flash; --full always (re)writes the bootloader itself.
+check_bootloader_present() {
+    local offset="$1"
+    local tmp
+    tmp="$(mktemp)"
+    if ! "${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" --baud "$BAUD" \
+            read_flash "$offset" 1 "$tmp" >/dev/null 2>&1; then
+        rm -f "$tmp"
+        warn "Could not verify the existing bootloader before flashing — continuing anyway."
+        return 0
+    fi
+    local magic
+    magic="$(od -An -tx1 -N1 "$tmp" 2>/dev/null | tr -d ' \n')"
+    rm -f "$tmp"
+    if [ "$magic" != "e9" ]; then
+        die "No valid bootloader found at $offset (expected ESP image magic byte 0xe9, found 0x${magic:-??}). This looks like a blank / never-flashed chip — an app-only flash would write the app but the chip could never boot it. Re-run with --full instead (needs bootloader.bin/partition-table.bin/ota_data_initial.bin pre-staged locally — see AGENTS.md/CLAUDE.md)."
+    fi
 }
 
 cache_build_dir() {
@@ -163,6 +195,36 @@ find_esptool() {
         ESPTOOL_CMD=(esptool)
         return 0
     fi
+    return 1
+}
+
+# Locates a python3 with pyserial installed (needed for `python3 -m
+# serial.tools.miniterm`, the nicest available serial monitor). Tries the
+# Arduino IDE's bundled python3 first (pyserial is one of esptool.py's own
+# dependencies, so it's normally already there), then whatever's on PATH.
+# Sets PYSERIAL_PYTHON3. Returns 1 if none has pyserial.
+find_pyserial_python3() {
+    local base=""
+    case "$(uname -s)" in
+        Darwin) base="$HOME/Library/Arduino15/packages/esp32/tools/python3" ;;
+        *)      base="$HOME/.arduino15/packages/esp32/tools/python3" ;;
+    esac
+
+    local candidate=""
+    if [ -d "$base" ]; then
+        local latest
+        latest="$(ls -1 "$base" 2>/dev/null | sort -V | tail -n1)"
+        [ -n "$latest" ] && [ -f "$base/$latest/python3" ] && candidate="$base/$latest/python3"
+    fi
+
+    for py in "$candidate" python3; do
+        [ -n "$py" ] || continue
+        command -v "$py" >/dev/null 2>&1 || [ -x "$py" ] || continue
+        if "$py" -c 'import serial.tools.miniterm' >/dev/null 2>&1; then
+            PYSERIAL_PYTHON3="$py"
+            return 0
+        fi
+    done
     return 1
 }
 

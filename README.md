@@ -96,6 +96,21 @@ needed instead.
 already paired to another device; the pairing details are stored on the board
 so to reuse the board it is required to wipe out the pairing data first.
 
+## Something isn't working right after a flash
+
+Two more tools help figure out what's happening on the board itself:
+
+- **`monitor.bat <product> <module>`** — shows you everything the board is
+  printing (boot messages, errors, crash logs) in real time. Leave it
+  running and watch. Press Ctrl+C (or just close the window) to stop.
+- **`reboot.bat <product> <module>`** — restarts the board without
+  re-flashing anything. Handy to force a fresh boot while `monitor.bat` is
+  open in another window, to see exactly what happens from power-on.
+
+If a board seems completely silent in `monitor.bat` even right after
+`reboot.bat`, tell whoever assigned the task — it likely needs a full
+re-flash (`flash.bat <product> <module> -Full`) rather than the normal one.
+
 ## What if I have no internet connection on-site?
 
 The tool can also work from firmware files already saved on your computer,
