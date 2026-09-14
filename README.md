@@ -95,6 +95,12 @@ needed instead.
 > This is specially useful when you want to reuse an existing board that was
 already paired to another device; the pairing details are stored on the board
 so to reuse the board it is required to wipe out the pairing data first.
+>
+> **Pairing is remembered on both sides.** The "main" board remembers every
+> node it's paired with, and each node remembers its "main" board, each on
+> its own. Resetting only one of the two leaves the pairing looking intact
+> from the other one's side — to fully un-pair a board, run `reset.bat` on
+> **both** the node and the "main" board it was paired to.
 
 ## Something isn't working right after a flash
 

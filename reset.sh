@@ -18,6 +18,16 @@
 # Examples:
 #   ./reset.sh wendy rbtensy
 #   ./reset.sh wendy rbtensy --full
+#
+# IMPORTANT — pairing is stored on BOTH sides, not just this board: the
+# coordinator ("main") remembers every paired node's MAC/id, and each node
+# independently remembers the coordinator's MAC/channel, each in its own
+# NVS (ungula::net::pairing — PairingCoordinator::storePairedClient /
+# PairingClient::storePairing). Erasing NVS on only ONE board leaves the
+# OTHER board still remembering the pairing — to fully un-pair a node, run
+# this on BOTH the node AND its coordinator ("main"). Pairing state is also
+# only read from NVS once, at boot, so the change isn't visible until the
+# board actually reboots — `--after hard_reset` below forces that.
 
 set -euo pipefail
 
@@ -64,12 +74,14 @@ if [ "$FULL" -eq 1 ]; then
     echo "${C_RED}${C_BOLD}This will erase the ENTIRE flash on this board, including its firmware.${C_RESET}"
     echo "It will not run again until you flash it (./flash.sh $PROJECT_ARG $MODULE_ARG --full)."
     confirm "Erase everything on ${SERIAL_PORT}?" || die "Aborted."
-    "${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" erase_flash
+    "${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" --after hard_reset erase_flash
     RC=$?
 else
     echo "Erasing NVS/settings only — offset $NVS_OFFSET, size $NVS_SIZE (from $PARTITIONS_CSV)."
+    echo "${C_YELLOW}Note: this only clears THIS board's half of any pairing. To fully un-pair,${C_RESET}"
+    echo "${C_YELLOW}also run this on the other side (the node's coordinator, or vice versa).${C_RESET}"
     confirm "Erase settings on ${SERIAL_PORT}?" || die "Aborted."
-    "${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" erase_region "$NVS_OFFSET" "$NVS_SIZE"
+    "${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" --after hard_reset erase_region "$NVS_OFFSET" "$NVS_SIZE"
     RC=$?
 fi
 set -e
