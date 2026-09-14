@@ -35,10 +35,11 @@ wiped and reloaded from scratch.
 
 #### 1. Install firmware onto a board
 
-Open PowerShell in this folder and run:
+Double-click `flash.bat` in this folder, or open a Command Prompt here and
+run:
 
 ```shell
-.\flash.ps1 <product> <module>
+flash.bat <product> <module>
 ```
 
 (On a Mac or Linux dev machine, use `./flash.sh <product> <module>` instead
@@ -48,8 +49,17 @@ For example, to flash the "rbtensy" board that's part of the "wendy"
 machine:
 
 ```shell
-.\flash.ps1 wendy rbtensy
+flash.bat wendy rbtensy
 ```
+
+> **Why `.bat` and not `.ps1` directly?** Windows normally refuses to run
+> `.ps1` scripts that aren't digitally signed ("...cannot be loaded because
+> running scripts is disabled on this system" / "...is not digitally
+> signed"). `flash.bat` sidesteps that for you. If you (or a script) call
+> `flash.ps1` directly instead, you'll need:
+> `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "flash.ps1" <product> <module>`
+> — note the script path and the `<product> <module>` arguments are
+> separate, not one combined quoted string.
 
 The tool will:
 
@@ -73,13 +83,13 @@ If a board is stuck, misbehaving, or you're told to "reset it completely,"
 use the same `<product> <module>` you'd give `flash`:
 
 ```shell
-.\reset.ps1 <product> <module>
+reset.bat <product> <module>
 ```
 
 This erases the board's saved settings so it starts fresh the next time
 it's flashed or powered on. It does **not** remove the firmware itself —
 for that, ask whoever assigned the task whether a full wipe
-(`.\reset.ps1 <product> <module> -Full`) followed by a fresh `flash` is
+(`reset.bat <product> <module> -Full`) followed by a fresh `flash` is
 needed instead.
 
 > This is specially useful when you want to reuse an existing board that was

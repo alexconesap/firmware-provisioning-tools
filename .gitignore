@@ -1,16 +1,17 @@
 # Read-only symlinks into other local repos; never committed.
 /__REFERENCE__/
 
-# Per-developer overrides, same convention as the firmware repos
-# (<module>/.settings is tracked, <module>/.local.settings is not).
+# Redundant with /projects/* below (everything under projects/ is already
+# ignored) but kept in case .local.settings ever shows up outside projects/.
 *.local.settings
 
 # macOS / Windows cruft
 .DS_Store
 Thumbs.db
 
-# Runtime cache/staging used by flash.sh/flash.ps1 — downloaded or
-# pre-staged binaries, per-run logs. Mirrors <project>/code/build/<module>/
-# from the firmware repos, so a whole build/ folder can be copied straight
-# in for pre-staging without renaming anything
-/projects/
+# Nothing under projects/ is tracked (settings, partitions.csv, build/ output
+# — all of it is per-machine/per-checkout, not part of this repo). Keep the
+# folder itself present in a fresh clone via projects/.gitkeep, which is the
+# one file exempted below.
+/projects/*
+!/projects/.gitkeep
