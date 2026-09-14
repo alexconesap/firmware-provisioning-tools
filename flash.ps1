@@ -3,7 +3,7 @@
     Flash firmware onto an ESP32 / ESP32-S3 board over USB.
 
 .DESCRIPTION
-    Uses esptool (bundled inside the Arduino IDE's esp32 core) — no ESP-IDF,
+    Uses esptool (bundled inside the Arduino IDE's esp32 core) - no ESP-IDF,
     no git, no source repo required.
 
 .PARAMETER Project
@@ -87,7 +87,7 @@ if ($Full) {
     if ($Missing.Count -gt 0) {
         Write-Host "Full blank-chip flash needs these files staged locally first (the update" -ForegroundColor Red
         Write-Host "server doesn't publish them yet):" -ForegroundColor Red
-        $Missing | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+        $Missing | ForEach-Object { Write-Host " - $_" -ForegroundColor Red }
         Write-Host ""
         Write-Host "Copy a full 'code\build\$Module\' folder from a developer machine into:"
         Write-Host "  $BuildDir"
@@ -139,9 +139,9 @@ try {
 
 Write-Host ""
 if ($Rc -eq 0) {
-    Write-Host "FLASH SUCCEEDED — $Project $Module  port: $SerialPort" -ForegroundColor Green
+    Write-Host "FLASH SUCCEEDED - $Project $Module  port: $SerialPort" -ForegroundColor Green
 } else {
-    Write-Host "FLASH FAILED — $Project $Module  port: $SerialPort" -ForegroundColor Red
+    Write-Host "FLASH FAILED - $Project $Module  port: $SerialPort" -ForegroundColor Red
     Write-Host "Full log: $LogFile"
 }
 exit $Rc

@@ -1,8 +1,8 @@
 # Shared helpers for flash.ps1 / reset.ps1.
-# Not meant to be run directly — dot-sourced after the caller sets
+# Not meant to be run directly - dot-sourced after the caller sets
 # $ToolsRoot to the repo root (the directory containing this lib/ folder).
 #
-# Layout this file assumes — everything lives under
+# Layout this file assumes - everything lives under
 # projects\ so the repo root stays clean:
 #   <ToolsRoot>\projects\<project>\<module>\.settings         tracked
 #   <ToolsRoot>\projects\<project>\<module>\.local.settings    gitignored
@@ -24,7 +24,7 @@ function Confirm-Action {
 
 # Parses a bash-style KEY="value" settings file, resolving simple $VAR /
 # ${VAR} references against values already parsed from this file (in the
-# order they appear — matches how bash sources it). Returns a hashtable.
+# order they appear - matches how bash sources it). Returns a hashtable.
 function Read-SettingsFile {
     param([string]$Path, [hashtable]$Seed = @{})
 
@@ -76,7 +76,7 @@ function Load-ModuleSettings {
     $script:Settings = $values
     $script:PartitionsCsv = Join-Path $moduleDir 'partitions.csv'
     if (-not (Test-Path $script:PartitionsCsv)) {
-        Die "Missing $($script:PartitionsCsv) — copy it from the firmware repo's <project>\code\<module>\partitions.csv."
+        Die "Missing $($script:PartitionsCsv) - copy it from the firmware repo's <project>\code\<module>\partitions.csv."
     }
 }
 

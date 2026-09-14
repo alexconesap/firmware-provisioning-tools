@@ -5,7 +5,7 @@
 .DESCRIPTION
     Replicates arduino-build-scripts/erase_settings.sh, but reads the NVS
     offset/size from the module's own partitions.csv instead of assuming the
-    classic Arduino default — a differently-partitioned module can differ.
+    classic Arduino default - a differently-partitioned module can differ.
 
 .PARAMETER Project
     Product name, e.g. "wendy".
@@ -17,7 +17,7 @@
     Override the serial COM port (skips auto-detect/prompt).
 
 .PARAMETER Full
-    Erase the ENTIRE flash, including the firmware itself — not just NVS.
+    Erase the ENTIRE flash, including the firmware itself - not just NVS.
     The device will need a full `flash` afterward, not just a reset.
     Without this switch, only the NVS/settings partition is erased.
 
@@ -59,9 +59,9 @@ if ($Full) {
     if (-not (Confirm-Action -Prompt "Erase everything on ${SerialPort}?")) { Die "Aborted." }
     & $EspTool --chip $IdfTarget --port $SerialPort erase_flash
 } else {
-    Write-Host "Erasing NVS/settings only — offset $($Parts.NvsOffset), size $($Parts.NvsSize) (from $($script:PartitionsCsv))."
+    Write-Host "Erasing NVS/settings only - offset $($Parts.NvsOffset), size $($Parts.NvsSize) (from $($script:PartitionsCsv))."
     if (-not (Confirm-Action -Prompt "Erase settings on ${SerialPort}?")) { Die "Aborted." }
     & $EspTool --chip $IdfTarget --port $SerialPort erase_region $Parts.NvsOffset $Parts.NvsSize
 }
 
-Write-Host "RESET DONE — $Project $Module  port: $SerialPort" -ForegroundColor Green
+Write-Host "RESET DONE - $Project $Module  port: $SerialPort" -ForegroundColor Green
