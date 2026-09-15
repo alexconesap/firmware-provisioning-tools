@@ -23,10 +23,10 @@
     flash.ps1.
 
 .EXAMPLE
-    .\monitor.ps1 wendy rbtensy
+    monitor.bat wendy rbtensy
 
 .EXAMPLE
-    .\monitor.ps1 wendy rbtensy -Port COM5 -Baud 115200
+    monitor.bat wendy rbtensy -Port COM5 -Baud 115200
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)][string]$Project,
@@ -36,7 +36,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ToolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# This script lives in lib\ (run via the root monitor.bat); the tools root is one level up.
+$ToolsRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . (Join-Path $ToolsRoot 'lib\common.ps1')
 $script:ToolsRoot = $ToolsRoot
 $script:AssumeYes = $true

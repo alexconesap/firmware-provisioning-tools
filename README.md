@@ -56,17 +56,33 @@ flash.bat wendy rbtensy
 > `.ps1` scripts that aren't digitally signed ("...cannot be loaded because
 > running scripts is disabled on this system" / "...is not digitally
 > signed"). `flash.bat` sidesteps that for you. If you (or a script) call
-> `flash.ps1` directly instead, you'll need:
-> `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "flash.ps1" <product> <module>`
+> `lib\flash.ps1` directly instead, you'll need:
+> `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "lib\flash.ps1" <product> <module>`
 > — note the script path and the `<product> <module>` arguments are
 > separate, not one combined quoted string.
 
 The tool will:
 
-1. Figure out which USB port the board is on.
-2. Download the correct, latest official firmware for that exact board.
-3. Write it onto the board.
-4. Tell you clearly whether it worked or not.
+1. Ask what you want to do:
+   - **1) Update firmware** (just press Enter) — the board already runs this
+     product's firmware and you only want to reload or update it.
+   - **2) Full flash** — the board is brand-new, came with some other
+     firmware on it (for example a manufacturer demo), or keeps restarting
+     after a normal update. This needs firmware files prepared for you by
+     the team in advance.
+2. Figure out which USB port the board is on.
+3. Download the correct, latest official firmware for that exact board (or
+   use the prepared files, for a Full flash).
+4. Write it onto the board.
+5. Tell you clearly whether it worked or not.
+
+If you choose **1) Update firmware** but the board actually needs a Full
+flash (it's blank, or has some other firmware on it), the tool notices
+before writing anything, stops, and tells you to run it again and choose
+**2) Full flash**.
+
+(From the command line, `flash.bat <product> <module> -Full` skips the
+question and goes straight to a Full flash.)
 
 If something goes wrong, it will print a plain-English message explaining
 what to check (USB cable, board not detected, no internet connection, etc.)
@@ -86,11 +102,14 @@ use the same `<product> <module>` you'd give `flash`:
 reset.bat <product> <module>
 ```
 
-This erases the board's saved settings so it starts fresh the next time
-it's flashed or powered on. It does **not** remove the firmware itself —
-for that, ask whoever assigned the task whether a full wipe
-(`reset.bat <product> <module> -Full`) followed by a fresh `flash` is
-needed instead.
+It asks what to erase:
+
+- **1) Settings only** (just press Enter) — erases the board's saved
+  settings and pairing so it starts fresh the next time it's powered on.
+  The firmware stays.
+- **2) Everything** — also removes the firmware. Only do this if whoever
+  assigned the task asked for a full wipe: the board won't work again until
+  you run `flash.bat` and choose **2) Full flash**.
 
 > This is specially useful when you want to reuse an existing board that was
 already paired to another device; the pairing details are stored on the board
@@ -114,8 +133,9 @@ Two more tools help figure out what's happening on the board itself:
   open in another window, to see exactly what happens from power-on.
 
 If a board seems completely silent in `monitor.bat` even right after
-`reboot.bat`, tell whoever assigned the task — it likely needs a full
-re-flash (`flash.bat <product> <module> -Full`) rather than the normal one.
+`reboot.bat`, or keeps restarting over and over, tell whoever assigned the
+task — it likely needs `flash.bat` with **2) Full flash** rather than the
+normal update.
 
 ## What if I have no internet connection on-site?
 

@@ -22,6 +22,32 @@ function Confirm-Action {
     return ($ans -match '^(?i:y|yes)$')
 }
 
+# True when someone is there to answer prompts: no -Yes, and input isn't
+# redirected (a double-clicked .bat, or a normal console window).
+function Test-Interactive {
+    if ($script:AssumeYes) { return $false }
+    return -not [Console]::IsInputRedirected
+}
+
+# Numbered menu for non-technical users. Returns the 1-based choice; Enter
+# picks option 1, so keep the safe/default option first. Re-asks on bad input.
+function Read-MenuChoice {
+    param([string]$Prompt, [string[]]$Options)
+    Write-Host $Prompt
+    for ($i = 0; $i -lt $Options.Count; $i++) {
+        Write-Host "  $($i + 1)) $($Options[$i])"
+    }
+    while ($true) {
+        $choice = Read-Host "Choose [1-$($Options.Count)] (Enter = 1)"
+        if ([string]::IsNullOrWhiteSpace($choice)) { return 1 }
+        $idx = 0
+        if ([int]::TryParse($choice.Trim(), [ref]$idx) -and $idx -ge 1 -and $idx -le $Options.Count) {
+            return $idx
+        }
+        Write-Warn "Please type a number between 1 and $($Options.Count)."
+    }
+}
+
 # Parses a bash-style KEY="value" settings file, resolving simple $VAR /
 # ${VAR} references against values already parsed from this file (in the
 # order they appear - matches how bash sources it). Returns a hashtable.
@@ -73,6 +99,8 @@ function Load-ModuleSettings {
     }
 
     $script:ModuleDir = $moduleDir
+    # As the user typed it; MAIN_PROJECT_ID can differ (fs-uv's is fs_uv).
+    $script:ModuleLabel = "$Project $Module"
     $script:Settings = $values
     $script:PartitionsCsv = Join-Path $moduleDir 'partitions.csv'
     if (-not (Test-Path $script:PartitionsCsv)) {
@@ -128,13 +156,17 @@ function Get-BootloaderOffset {
     return '0x0'
 }
 
-# Reads the single byte at -Offset (a bootloader offset) off the currently
-# connected chip and dies with a plain-English message if it isn't a valid
-# ESP image header (magic byte 0xE9) - i.e. this chip has no bootloader at
-# all, so an app-only flash would "succeed" while leaving it unable to boot
-# anything (a genuinely blank chip needs -Full instead). Only meaningful
-# before an app-only flash; -Full always (re)writes the bootloader itself.
-function Test-BootloaderPresent {
+# Default-mode (app-only) safety check. Reads the first 0x9000 bytes off the
+# connected chip and dies with a plain-English message if an app-only flash
+# can't work there - both cases need -Full instead:
+#  - no ESP image header (magic byte 0xE9) at -Offset, the bootloader offset:
+#    a blank / never-flashed chip, which could never boot the app;
+#  - the partition table at 0x8000 doesn't have the app slots/otadata this
+#    module's partitions.csv expects: the board runs other firmware (e.g. a
+#    vendor demo) or an older layout, so its bootloader never looks where
+#    the app gets written and it sits in a reset loop.
+# If the chip can't be read at all, warns and continues.
+function Test-ExistingFirmware {
     param(
         [string]$EspToolPath,
         [string]$IdfTarget,
@@ -142,21 +174,94 @@ function Test-BootloaderPresent {
         [string]$Baud,
         [string]$Offset
     )
+    # Windows PowerShell 5.1 turns redirected native stderr into errors, which
+    # 'Stop' would make fatal - the exit code is checked explicitly instead.
+    $ErrorActionPreference = 'Continue'
     $tmp = [System.IO.Path]::GetTempFileName()
     try {
-        & $EspToolPath --chip $IdfTarget --port $SerialPort --baud $Baud read_flash $Offset 1 $tmp 2>&1 | Out-Null
+        & $EspToolPath --chip $IdfTarget --port $SerialPort --baud $Baud read_flash '0x0' '0x9000' $tmp 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Warn "Could not verify the existing bootloader before flashing - continuing anyway."
+            Write-Warn "Could not check the firmware already on the board before flashing - continuing anyway."
             return
         }
-        $bytes = [System.IO.File]::ReadAllBytes($tmp)
-        if ($bytes.Length -lt 1 -or $bytes[0] -ne 0xE9) {
-            $found = if ($bytes.Length -ge 1) { '0x{0:X2}' -f $bytes[0] } else { '(nothing read)' }
-            Die "No valid bootloader found at $Offset (expected ESP image magic byte 0xE9, found $found). This looks like a blank / never-flashed chip - an app-only flash would write the app but the chip could never boot it. Re-run with -Full instead (needs bootloader.bin/partition-table.bin/ota_data_initial.bin pre-staged locally - see AGENTS.md/CLAUDE.md)."
+        $dump = [System.IO.File]::ReadAllBytes($tmp)
+        $bootOffset = [int](ConvertTo-FlashInt $Offset)
+        if ($dump.Length -le $bootOffset -or $dump[$bootOffset] -ne 0xE9) {
+            $found = if ($dump.Length -gt $bootOffset) { '0x{0:X2}' -f $dump[$bootOffset] } else { '(nothing read)' }
+            Die "No valid bootloader found at $Offset (expected ESP image magic byte 0xE9, found $found). This looks like a blank / never-flashed chip - an app-only flash would write the app but the chip could never boot it. Run flash again and choose 'Full flash' (or pass -Full) - it needs bootloader.bin/partition-table.bin/ota_data_initial.bin pre-staged locally, see AGENTS.md/CLAUDE.md."
+        }
+        $device = Get-DeviceLayout -Dump $dump
+        $expected = Get-CsvLayout -Path $script:PartitionsCsv
+        if ($device -ne $expected) {
+            Die ("The board's flash layout doesn't match $($script:ModuleLabel) - it most likely has different firmware on it (for example a manufacturer demo) or an older layout. A normal update would leave it stuck restarting. Run flash again and choose 'Full flash' (or pass -Full).`n" +
+                "  on the board: $(Format-Layout $device)`n" +
+                "  expected:     $(Format-Layout $expected)")
         }
     } finally {
         Remove-Item -Path $tmp -ErrorAction SilentlyContinue
     }
+}
+
+# Partition layout helpers for Test-ExistingFirmware: one
+# "<type>/<subtype>/<offset>/<size>" entry (decimal) per app slot and per
+# otadata partition, sorted and space-joined, so the chip's table and
+# partitions.csv compare as plain strings.
+function Get-CsvLayout {
+    param([string]$Path)
+    $rows = foreach ($line in Get-Content -Path $Path) {
+        $trimmed = $line.Trim()
+        if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
+        $f = @($trimmed.Split(',') | ForEach-Object { $_.Trim() })
+        if ($f.Count -lt 5) { continue }
+        $key = "$($f[1]),$($f[2])"
+        if ($key -eq 'app,factory') {
+            $t = 0; $s = 0
+        } elseif ($key -match '^app,ota_(\d+)$') {
+            $t = 0; $s = 16 + [int]$Matches[1]
+        } elseif ($key -eq 'data,ota') {
+            $t = 1; $s = 0
+        } else {
+            continue
+        }
+        '{0}/{1}/{2}/{3}' -f $t, $s, (ConvertTo-FlashInt $f[3]), (ConvertTo-FlashInt $f[4])
+    }
+    return (@($rows) | Sort-Object) -join ' '
+}
+
+function Get-DeviceLayout {
+    param([byte[]]$Dump)
+    $rows = @()
+    $end = [Math]::Min($Dump.Length, 0x8C00)
+    for ($i = 0x8000; $i + 32 -le $end; $i += 32) {
+        if ($Dump[$i] -eq 0xEB -and $Dump[$i + 1] -eq 0xEB) { continue }   # MD5 checksum row
+        if ($Dump[$i] -ne 0xAA -or $Dump[$i + 1] -ne 0x50) { break }       # 0xFFFF: end of table
+        $t = $Dump[$i + 2]; $s = $Dump[$i + 3]
+        if ($t -eq 0 -or ($t -eq 1 -and $s -eq 0)) {
+            $rows += '{0}/{1}/{2}/{3}' -f $t, $s, [BitConverter]::ToUInt32($Dump, $i + 4), [BitConverter]::ToUInt32($Dump, $i + 8)
+        }
+    }
+    return (@($rows) | Sort-Object) -join ' '
+}
+
+# "0x20000" / "131072" / "64K" / "4M" -> Int64
+function ConvertTo-FlashInt {
+    param([string]$Value)
+    $v = $Value.Trim()
+    if ($v -match '^(\d+)[Kk]$') { return [int64]$Matches[1] * 1KB }
+    if ($v -match '^(\d+)[Mm]$') { return [int64]$Matches[1] * 1MB }
+    if ($v -match '^0[xX]([0-9A-Fa-f]+)$') { return [Convert]::ToInt64($Matches[1], 16) }
+    return [int64]$v
+}
+
+function Format-Layout {
+    param([string]$Layout)
+    if (-not $Layout) { return '(no partition table)' }
+    $parts = foreach ($entry in $Layout -split ' ') {
+        $p = $entry -split '/'
+        $name = if ($p[0] -eq '1') { 'otadata' } elseif ($p[1] -eq '0') { 'factory' } else { 'ota_' + ([int]$p[1] - 16) }
+        '{0}@0x{1:x}[0x{2:x}]' -f $name, [int64]$p[2], [int64]$p[3]
+    }
+    return $parts -join ' '
 }
 
 function Get-CacheBuildDir {
@@ -170,11 +275,15 @@ function Get-CacheBuildDir {
 function Find-EspTool {
     $base = Join-Path $env:LOCALAPPDATA 'Arduino15\packages\esp32\tools\esptool_py'
     if (Test-Path $base) {
-        $latest = Get-ChildItem -Path $base -Directory |
-            Sort-Object { [version]($_.Name -replace '[^0-9.].*$', '') } -ErrorAction SilentlyContinue |
-            Select-Object -Last 1
-        if ($latest) {
-            $exe = Join-Path $latest.FullName 'esptool.exe'
+        # Newest first. Folder names like "4.9.dev3" / "5.0.dev1" (esp32 cores
+        # 3.1-3.2) aren't valid [version] strings as-is, so normalize them.
+        $dirs = Get-ChildItem -Path $base -Directory | Sort-Object -Descending {
+            $v = ($_.Name -replace '[^0-9.].*$', '').Trim('.')
+            if ($v -notmatch '\.') { $v += '.0' }
+            try { [version]$v } catch { [version]'0.0' }
+        }
+        foreach ($dir in $dirs) {
+            $exe = Join-Path $dir.FullName 'esptool.exe'
             if (Test-Path $exe) { return $exe }
         }
     }
@@ -226,10 +335,19 @@ function Get-AppBin {
     New-Item -ItemType Directory -Force -Path $DestDir | Out-Null
     $url = $script:Settings['OTA_UPDATE_URL'].TrimEnd('/') + '/' + $script:Settings['OTA_BIN_FILENAME']
     $dest = Join-Path $DestDir $script:Settings['OTA_BIN_FILENAME']
+    $part = "$dest.part"
     Write-Info "Downloading $url"
+    # Windows PowerShell 5.1 can default to pre-TLS-1.2 protocols, and its
+    # progress bar slows big downloads to a crawl.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = 'SilentlyContinue'
     try {
-        Invoke-WebRequest -Uri $url -OutFile $dest -TimeoutSec 60 -UseBasicParsing
+        # Temp name first: an interrupted download must never be left where
+        # the next run would reuse it as the cached binary.
+        Invoke-WebRequest -Uri $url -OutFile $part -TimeoutSec 300 -UseBasicParsing
+        Move-Item -Force -Path $part -Destination $dest
     } catch {
+        Remove-Item -Path $part -ErrorAction SilentlyContinue
         Die "Download failed: $url`nCheck your internet connection, or pre-stage $($script:Settings['OTA_BIN_FILENAME']) in:`n  $DestDir"
     }
     return $dest

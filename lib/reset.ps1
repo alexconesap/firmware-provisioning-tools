@@ -19,16 +19,18 @@
 .PARAMETER Full
     Erase the ENTIRE flash, including the firmware itself - not just NVS.
     The device will need a full `flash` afterward, not just a reset.
-    Without this switch, only the NVS/settings partition is erased.
+    Without this switch, only the NVS/settings partition is erased - or, if
+    -Yes wasn't given and someone can answer (e.g. a double-clicked
+    reset.bat), the script asks which of the two to do.
 
 .PARAMETER Yes
     Skip the confirmation prompt.
 
 .EXAMPLE
-    .\reset.ps1 wendy rbtensy
+    reset.bat wendy rbtensy
 
 .EXAMPLE
-    .\reset.ps1 wendy rbtensy -Full
+    reset.bat wendy rbtensy -Full
 
 .NOTES
     IMPORTANT - pairing is stored on BOTH sides, not just this board: the
@@ -50,13 +52,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ToolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# This script lives in lib\ (run via the root reset.bat); the tools root is one level up.
+$ToolsRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . (Join-Path $ToolsRoot 'lib\common.ps1')
 $script:ToolsRoot = $ToolsRoot
 $script:AssumeYes = [bool]$Yes
 
 Load-ModuleSettings -Project $Project -Module $Module
 $IdfTarget = $Settings['IDF_TARGET']
+
+# Same as flash.ps1: offer -Full as a menu choice when someone can answer.
+$FullMode = [bool]$Full
+if (-not $FullMode -and (Test-Interactive)) {
+    $pick = Read-MenuChoice -Prompt "What do you want to erase?" -Options @(
+        "Settings only - saved settings and pairing; the firmware stays",
+        "Everything    - the firmware too; the board needs a Full flash afterward"
+    )
+    $FullMode = ($pick -eq 2)
+}
+
 $SerialPort = Resolve-Port -PortOverride $Port
 $EspTool = Find-EspTool
 if (-not $EspTool) {
@@ -64,9 +78,9 @@ if (-not $EspTool) {
 }
 $Parts = Read-PartitionsCsv -Path $script:PartitionsCsv
 
-if ($Full) {
+if ($FullMode) {
     Write-Host "This will erase the ENTIRE flash on this board, including its firmware." -ForegroundColor Red
-    Write-Host "It will not run again until you flash it (.\flash.ps1 $Project $Module -Full)."
+    Write-Host "It will not run again until you run flash.bat $Project $Module and choose 'Full flash' (or pass -Full)."
     if (-not (Confirm-Action -Prompt "Erase everything on ${SerialPort}?")) { Die "Aborted." }
     & $EspTool --chip $IdfTarget --port $SerialPort --after hard_reset erase_flash
 } else {
@@ -76,5 +90,12 @@ if ($Full) {
     if (-not (Confirm-Action -Prompt "Erase settings on ${SerialPort}?")) { Die "Aborted." }
     & $EspTool --chip $IdfTarget --port $SerialPort --after hard_reset erase_region $Parts.NvsOffset $Parts.NvsSize
 }
+$Rc = $LASTEXITCODE
 
-Write-Host "RESET DONE - $Project $Module  port: $SerialPort" -ForegroundColor Green
+Write-Host ""
+if ($Rc -eq 0) {
+    Write-Host "RESET DONE - $Project $Module  port: $SerialPort" -ForegroundColor Green
+} else {
+    Write-Host "RESET FAILED - $Project $Module  port: $SerialPort" -ForegroundColor Red
+}
+exit $Rc

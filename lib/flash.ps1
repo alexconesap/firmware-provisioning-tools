@@ -26,7 +26,9 @@
     the app, instead of just re-flashing the app over an existing
     bootloader. Requires those files pre-staged locally (the update server
     does not publish them yet); this is the "prepared on a
-    laptop before going on-site" case.
+    laptop before going on-site" case. If neither -Full nor -Yes is given
+    and someone can answer (e.g. a double-clicked flash.bat), the script
+    asks which mode to use instead (Enter = normal app-only update).
 
 .PARAMETER Refresh
     Re-download the app binary even if a cached copy already sits in the
@@ -36,13 +38,13 @@
     Skip the confirmation prompt before flashing.
 
 .EXAMPLE
-    .\flash.ps1 wendy rbtensy
+    flash.bat wendy rbtensy
 
 .EXAMPLE
-    .\flash.ps1 wendy rbtensy -Port COM5
+    flash.bat wendy rbtensy -Port COM5
 
 .EXAMPLE
-    .\flash.ps1 wendy rbtensy -Full   # needs pre-staged build files
+    flash.bat wendy rbtensy -Full   # needs pre-staged build files
 #>
 param(
     [Parameter(Mandatory = $true, Position = 0)][string]$Project,
@@ -56,13 +58,26 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ToolsRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+# This script lives in lib\ (run via the root flash.bat); the tools root is one level up.
+$ToolsRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 . (Join-Path $ToolsRoot 'lib\common.ps1')
 $script:ToolsRoot = $ToolsRoot
 $script:AssumeYes = [bool]$Yes
 
 Load-ModuleSettings -Project $Project -Module $Module
 $IdfTarget = if ($EspType) { $EspType } else { $Settings['IDF_TARGET'] }
+
+# Full mode must be reachable without typing -Full: when someone can answer
+# (e.g. a double-clicked flash.bat), ask. Scripted runs (-Yes, redirected
+# input) keep the old default, app-only.
+$FullMode = [bool]$Full
+if (-not $FullMode -and (Test-Interactive)) {
+    $pick = Read-MenuChoice -Prompt "What do you want to do?" -Options @(
+        "Update firmware - the board already runs $Project $Module firmware",
+        "Full flash      - brand-new board, a board that had other firmware on it, or one that keeps rebooting after an update"
+    )
+    $FullMode = ($pick -eq 2)
+}
 
 $SerialPort = Resolve-Port -PortOverride $Port
 $EspTool = Find-EspTool
@@ -78,7 +93,7 @@ $FlashPairs = New-Object System.Collections.Generic.List[string]
 $OtaBinFilename = $Settings['OTA_BIN_FILENAME']
 $BootloaderOffset = Get-BootloaderOffset -IdfTarget $IdfTarget
 
-if ($Full) {
+if ($FullMode) {
     $BootloaderFile = Join-Path $BuildDir 'bootloader\bootloader.bin'
     $PartTableFile = Join-Path $BuildDir 'partition_table\partition-table.bin'
     $OtaDataFile = Join-Path $BuildDir 'ota_data_initial.bin'
@@ -101,7 +116,7 @@ if ($Full) {
     $FlashPairs.Add($Parts.AppOffset); $FlashPairs.Add($OtaBinFilename)
     $ModeLabel = 'full (blank-chip) flash'
 } else {
-    Test-BootloaderPresent -EspToolPath $EspTool -IdfTarget $IdfTarget -SerialPort $SerialPort -Baud $Baud -Offset $BootloaderOffset
+    Test-ExistingFirmware -EspToolPath $EspTool -IdfTarget $IdfTarget -SerialPort $SerialPort -Baud $Baud -Offset $BootloaderOffset
     $AppFile = Join-Path $BuildDir $OtaBinFilename
     if ($Refresh -or -not (Test-Path $AppFile)) {
         Get-AppBin -DestDir $BuildDir | Out-Null
@@ -141,8 +156,12 @@ Push-Location $BuildDir
 try {
     $EspArgs = @('--chip', $IdfTarget, '--port', $SerialPort, '--baud', $Baud,
                  'write_flash', '-z', '--flash_mode', 'keep', '--flash_freq', 'keep', '--flash_size', 'keep') + $FlashPairs
-    & $EspTool @EspArgs 2>&1 | Tee-Object -FilePath $LogFile
+    # Windows PowerShell 5.1 turns redirected native stderr into errors, which
+    # 'Stop' would make fatal mid-flash - the exit code is checked below instead.
+    $ErrorActionPreference = 'Continue'
+    & $EspTool @EspArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $LogFile
     $Rc = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
 } finally {
     Pop-Location
 }

@@ -15,9 +15,9 @@
 #                         table + OTA-init data + the app, instead of just
 #                         re-flashing the app over an existing bootloader.
 #                         Requires those files pre-staged locally (the OTA
-#                         server does not publish them yet);
-#                         this is the "prepared on a laptop before going
-#                         on-site" case.
+#                         server does not publish them yet). Without --full
+#                         or --yes, a terminal run asks which mode to use
+#                         (Enter = normal app-only update).
 #   --refresh             Re-download the app binary even if a cached copy
 #                         already sits in the local cache.
 #   --yes / -y             Skip the confirmation prompt before flashing.
@@ -74,6 +74,15 @@ done
 load_module_settings "$PROJECT_ARG" "$MODULE_ARG"
 [ -n "$ESP_TYPE_OVERRIDE" ] && IDF_TARGET="$ESP_TYPE_OVERRIDE"
 
+# Full mode must be reachable without typing --full: when someone can answer
+# (a terminal, no --yes), ask. Scripted runs keep the old default, app-only.
+if [ "$FULL" -eq 0 ] && is_interactive; then
+    choose_option "What do you want to do?" \
+        "Update firmware - the board already runs ${PROJECT_ARG} ${MODULE_ARG} firmware" \
+        "Full flash      - brand-new board, a board that had other firmware on it, or one that keeps rebooting after an update"
+    if [ "$CHOICE" = "2" ]; then FULL=1; fi
+fi
+
 resolve_port
 find_esptool || die "Could not find esptool. Install the esp32 core in Arduino IDE (Boards Manager), or install esptool yourself (pip install esptool)."
 parse_partitions_csv "$PARTITIONS_CSV"
@@ -112,7 +121,7 @@ if [ "$FULL" -eq 1 ]; then
     )
     MODE_LABEL="full (blank-chip) flash"
 else
-    check_bootloader_present "$BOOTLOADER_OFFSET"
+    check_existing_firmware "$BOOTLOADER_OFFSET"
     APP_FILE="$BUILD_DIR/$OTA_BIN_FILENAME"
     if [ "$REFRESH" -eq 1 ] || [ ! -f "$APP_FILE" ]; then
         download_app_bin "$BUILD_DIR" >/dev/null

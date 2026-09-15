@@ -52,6 +52,7 @@ resolve_port
 find_esptool || die "Could not find esptool. Install the esp32 core in Arduino IDE (Boards Manager), or install esptool yourself (pip install esptool)."
 
 info "Resetting $PROJECT_ARG $MODULE_ARG on $SERIAL_PORT..."
-"${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" run
+"${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" run \
+    || die "Could not reset $PROJECT_ARG $MODULE_ARG on $SERIAL_PORT. Check the USB cable and port."
 
 echo "${C_GREEN}${C_BOLD}RESET SENT${C_RESET} — the board should now be booting. Run ./monitor.sh $PROJECT_ARG $MODULE_ARG to watch it."

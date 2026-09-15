@@ -10,9 +10,9 @@
 #   <project> <module>   e.g. wendy rbtensy — resolves to ./wendy/rbtensy/
 #   --port <port>        Override the serial port (skips auto-detect/prompt).
 #   --full                 Erase the ENTIRE flash, including the firmware
-#                         itself — not just NVS. The device will need a full
-#                         `flash` afterward, not just a reset. Without this
-#                         flag, only the NVS/settings partition is erased.
+#                         itself — not just NVS; needs a full `flash` after.
+#                         Without --full or --yes, a terminal run asks which
+#                         to erase (Enter = NVS/settings only).
 #   --yes / -y             Skip the confirmation prompt.
 #
 # Examples:
@@ -65,6 +65,15 @@ done
 [ -n "$PROJECT_ARG" ] && [ -n "$MODULE_ARG" ] || { usage; die "Usage: reset.sh <project> <module> [options]"; }
 
 load_module_settings "$PROJECT_ARG" "$MODULE_ARG"
+
+# Same as flash.sh: offer --full as a menu choice when someone can answer.
+if [ "$FULL" -eq 0 ] && is_interactive; then
+    choose_option "What do you want to erase?" \
+        "Settings only - saved settings and pairing; the firmware stays" \
+        "Everything    - the firmware too; the board needs a Full flash afterward"
+    if [ "$CHOICE" = "2" ]; then FULL=1; fi
+fi
+
 resolve_port
 find_esptool || die "Could not find esptool. Install the esp32 core in Arduino IDE (Boards Manager), or install esptool yourself (pip install esptool)."
 parse_partitions_csv "$PARTITIONS_CSV"
@@ -72,7 +81,7 @@ parse_partitions_csv "$PARTITIONS_CSV"
 set +e
 if [ "$FULL" -eq 1 ]; then
     echo "${C_RED}${C_BOLD}This will erase the ENTIRE flash on this board, including its firmware.${C_RESET}"
-    echo "It will not run again until you flash it (./flash.sh $PROJECT_ARG $MODULE_ARG --full)."
+    echo "It will not run again until you run ./flash.sh $PROJECT_ARG $MODULE_ARG and choose 'Full flash' (or pass --full)."
     confirm "Erase everything on ${SERIAL_PORT}?" || die "Aborted."
     "${ESPTOOL_CMD[@]}" --chip "$IDF_TARGET" --port "$SERIAL_PORT" --after hard_reset erase_flash
     RC=$?
